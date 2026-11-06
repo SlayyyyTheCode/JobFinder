@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ name }} — Resume</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Calibri, "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.35; color: #111; margin: 0; }
+  h1 { font-size: 20pt; text-align: center; margin: 0 0 2pt; letter-spacing: .5pt; }
+  .contact { text-align: center; font-size: 9.5pt; color: #333; margin-bottom: 6pt; }
+  h2 { font-size: 11pt; text-transform: uppercase; letter-spacing: 1pt; border-bottom: 1px solid #444; padding-bottom: 1pt; margin: 10pt 0 4pt; }
+  .role { margin: 6pt 0 2pt; display: flex; justify-content: space-between; gap: 12pt; page-break-inside: avoid; }
+  .role .t { font-weight: 700; }
+  .dates { white-space: nowrap; color: #333; }
+  ul { margin: 2pt 0 0 0; padding-left: 14pt; }
+  li { margin: 0 0 1.5pt; }
+  p { margin: 0 0 3pt; }
+</style>
+</head>
+<body>
+  <h1>{{ name }}</h1>
+  {% if contact_line %}<div class="contact">{{ contact_line }}</div>{% endif %}
+
+  {% if summary %}<h2>Summary</h2><p>{{ summary }}</p>{% endif %}
+
+  {% if experience %}<h2>Experience</h2>
+  {% for e in experience %}
+    <div class="role"><div><span class="t">{{ e.title }}</span> — {{ e.employer }}{% if e.location %}, {{ e.location }}{% endif %}</div><div class="dates">{{ e.dates }}</div></div>
+    <ul>{% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+  {% endfor %}{% endif %}
+
+  {% if projects %}<h2>Projects</h2>
+  {% for p in projects %}
+    <div class="role"><div class="t">{{ p.name }}</div></div>
+    <ul>{% for b in p.bullets %}<li>{{ b }}</li>{% endfor %}</ul>
+  {% endfor %}{% endif %}
+
+  {% if skills %}<h2>Skills</h2><p>{{ skills | join(", ") }}</p>{% endif %}
+
+  {% if education %}<h2>Education</h2>
+  {% for e in education %}
+    <div class="role"><div>{{ e.line }}{% if e.grade %} — {{ e.grade }}{% endif %}</div><div class="dates">{{ e.dates }}</div></div>
+  {% endfor %}{% endif %}
+
+  {% if certifications %}<h2>Certifications</h2><ul>{% for c in certifications %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+
+  {% if languages %}<h2>Languages</h2><p>{{ languages | join(", ") }}</p>{% endif %}
+</body>
+</html>
