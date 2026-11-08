@@ -207,9 +207,12 @@ def html_for(v: dict, template: str = "classic") -> str:
 
 def html_to_pdf(html: str, path: Path) -> None:
     from playwright.sync_api import sync_playwright
+
+    from ..config import get_settings
     with sync_playwright() as p:
-        b = p.chromium.launch()
-        page = b.new_page()
+        # Container is the sandbox in hosted mode. JS is disabled: the page is static template output.
+        b = p.chromium.launch(args=["--no-sandbox"] if get_settings().hosted else [])
+        page = b.new_context(java_script_enabled=False).new_page()
         page.set_content(html, wait_until="load")
         page.pdf(path=str(path), format="A4", print_background=True,
                  margin={"top": "14mm", "bottom": "14mm", "left": "15mm", "right": "15mm"})

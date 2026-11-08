@@ -58,13 +58,21 @@ def llm():
 
 @pytest.fixture
 def s(tmp_path):
-    eng = create_engine(f"sqlite:///{(tmp_path / 't.db').as_posix()}", connect_args={"check_same_thread": False})
+    """SQLite by default. Set TEST_DATABASE_URL=postgresql://… to run the whole suite on Postgres."""
     from app import models  # noqa: F401
+    url = os.environ.get("TEST_DATABASE_URL")
+    if url:
+        from app.config import Settings
+        eng = db.make_engine(Settings(database_url=url).db_url)
+        SQLModel.metadata.drop_all(eng)
+    else:
+        eng = create_engine(f"sqlite:///{(tmp_path / 't.db').as_posix()}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(eng)
     db.set_engine(eng)
     with Session(eng) as session:
         yield session
     db.set_engine(None)
+    eng.dispose()
 
 
 @pytest.fixture

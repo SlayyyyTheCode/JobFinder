@@ -23,7 +23,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     init.body = JSON.stringify(body);
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
   }
-  const res = await fetch(`/api/v1${path}`, init);
+  const res = await fetch(`/api/v1${path}`, { ...init, credentials: "same-origin" });
+  if (res.status === 401 && !path.startsWith("/auth/")) window.dispatchEvent(new Event("jp-unauthorized"));
   if (!res.ok) {
     let detail: unknown = res.statusText;
     try {

@@ -13,6 +13,9 @@ Adds a **JobPilot** icon to your Desktop and Start menu. It opens in its own win
 
 Note: autopilot and email checks only run while the app is open.
 
+## Running it online
+The same code also runs as a private hosted service: UI on Vercel, backend in a Docker container with Postgres, password login. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Quick start from a terminal (Windows)
 
 Requires Python 3.13 (`py -3.13`) and Node.js 20+.

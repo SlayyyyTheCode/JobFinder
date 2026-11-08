@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import inspect as sa_inspect
@@ -52,8 +52,10 @@ def status(s: Session = S):
     return {
         "llm": {"provider": cfg.llm_provider, "model": cfg.llm_model, "fast_model": cfg.llm_fast_model,
                 "configured": bool(cfg.gemini_api_key) if cfg.llm_provider == "gemini" else True},
-        "gmail_configured": bool(cfg.google_client_secrets_file and Path(cfg.google_client_secrets_file).exists()),
-        "outlook_configured": bool(cfg.ms_client_id),
+        "hosted": cfg.hosted,
+        "gmail_configured": bool(cfg.google_client_id and cfg.google_client_secret) if cfg.hosted
+        else bool(cfg.google_client_secrets_file and Path(cfg.google_client_secrets_file).exists()),
+        "outlook_configured": bool(cfg.ms_client_id and cfg.ms_client_secret) if cfg.hosted else bool(cfg.ms_client_id),
         "has_resume": s.exec(select(Resume)).first() is not None,
         "verified_facts": s.exec(select(func.count()).select_from(CandidateFact).where(
             CandidateFact.active == True, CandidateFact.verified == True)).one(),  # noqa: E712
@@ -102,6 +104,8 @@ def set_gemini_key(body: KeyIn):
     from .config import KEYRING_GEMINI, KEYRING_SERVICE, get_settings as gs
     from .llm import LLMError, set_llm
     from .llm.gemini import GeminiProvider
+    if gs().hosted:
+        raise HTTPException(400, "On a hosted server the key is set with the GEMINI_API_KEY environment variable.")
     key = body.api_key.strip()
     if len(key) < 20 or any(c.isspace() for c in key):
         raise HTTPException(400, "That doesn't look like a valid API key.")
@@ -794,29 +798,58 @@ def email_conns(s: Session = S):
             "pending": {p: connect_state(p) for p in ("gmail", "outlook")}}
 
 
+def _store_email_connection(prov: str, account: str, enc: str) -> None:
+    from .db import session_scope
+    with session_scope() as s2:
+        existing = s2.exec(select(EmailConnection).where(EmailConnection.provider == prov,
+                                                         EmailConnection.account == account)).first()
+        c = existing or EmailConnection(provider=prov, account=account)
+        c.token_enc, c.status, c.last_error = enc, "connected", ""
+        c.scopes = ["gmail.readonly"] if prov == "gmail" else ["Mail.Read", "User.Read"]
+        s2.add(c)
+        s2.add(ConsentRecord(purpose="email_monitoring", scope=f"{prov}:{account}:read-only"))
+        s2.commit()
+        s2.refresh(c)
+        audit(s2, "user", "email.connected", "email_connection", c.id, provider=prov)
+        enqueue(s2, "email.poll", {"connection_id": c.id}, dedupe_key=f"email:{c.id}", max_attempts=2)
+
+
+def _redirect_uri(provider: str) -> str:
+    base = get_settings().public_url.rstrip("/")
+    if not base:
+        raise HTTPException(400, "PUBLIC_URL is not set on the server.")
+    return f"{base}/api/v1/email/{provider}/callback"
+
+
 @r.post("/email/{provider}/connect")
 def email_connect(provider: str):
-    from .db import session_scope
-    from .email.clients import start_connect
+    from .email.clients import EmailAuthError, start_connect, web_authorize_url
     if provider not in ("gmail", "outlook"):
         raise HTTPException(404, "unknown mail provider")
-
-    def done(prov, account, enc):
-        with session_scope() as s2:
-            existing = s2.exec(select(EmailConnection).where(EmailConnection.provider == prov,
-                                                             EmailConnection.account == account)).first()
-            c = existing or EmailConnection(provider=prov, account=account)
-            c.token_enc, c.status, c.last_error = enc, "connected", ""
-            c.scopes = ["gmail.readonly"] if prov == "gmail" else ["Mail.Read", "User.Read"]
-            s2.add(c)
-            s2.add(ConsentRecord(purpose="email_monitoring", scope=f"{prov}:{account}:read-only"))
-            s2.commit()
-            s2.refresh(c)
-            audit(s2, "user", "email.connected", "email_connection", c.id, provider=prov)
-            enqueue(s2, "email.poll", {"connection_id": c.id}, dedupe_key=f"email:{c.id}", max_attempts=2)
-
-    start_connect(provider, done)
+    if get_settings().hosted:  # server can't open a browser on your PC → standard redirect flow
+        try:
+            return {"state": "redirect", "redirect": web_authorize_url(provider, _redirect_uri(provider))}
+        except EmailAuthError as e:
+            raise HTTPException(400, str(e))
+    start_connect(provider, _store_email_connection)
     return {"state": "running", "message": "A browser window opened for sign-in. Approve read-only access."}
+
+
+@r.get("/email/{provider}/callback")
+def email_callback(provider: str, request: Request):
+    from fastapi.responses import RedirectResponse
+    from .email.clients import EmailAuthError, web_complete
+    if provider not in ("gmail", "outlook") or not get_settings().hosted:
+        raise HTTPException(404, "not found")
+    dest = f"{get_settings().public_url.rstrip('/')}/connections"
+    try:
+        account, enc = web_complete(provider, dict(request.query_params), _redirect_uri(provider))
+        _store_email_connection(provider, account, enc)
+    except EmailAuthError as e:
+        return RedirectResponse(f"{dest}?mail_error={str(e)[:120]}", status_code=303)
+    except Exception:  # noqa: BLE001 — never leak provider/exchange details to the URL
+        return RedirectResponse(f"{dest}?mail_error=Sign-in failed. Please try again.", status_code=303)
+    return RedirectResponse(f"{dest}?connected={provider}", status_code=303)
 
 
 @r.delete("/email/connections/{cid}")

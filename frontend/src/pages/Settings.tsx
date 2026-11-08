@@ -7,7 +7,7 @@ import { Badge, Button, Card, ErrorNote, Modal, PageHeader, Spinner, Toggle, fmt
 type Answer = { key: string; question: string; category: string; answer: string; confirmed: boolean };
 type Task = { id: number; kind: string; status: string; attempts: number; last_error: string; updated_at: string };
 type Audit = { id: number; actor: string; action: string; entity: string; entity_id: number | null; ts: string };
-type Status = { llm: { provider: string; model: string; fast_model: string; configured: boolean } };
+type Status = { hosted: boolean; llm: { provider: string; model: string; fast_model: string; configured: boolean } };
 
 function ApiKeyForm({ configured }: { configured: boolean }) {
   const qc = useQueryClient();
@@ -71,7 +71,8 @@ export default function Settings() {
               <p>Provider: <b>{st.data.llm.provider}</b> {st.data.llm.configured ? <Badge tone="green">configured</Badge> : <Badge tone="red">API key missing</Badge>}</p>
               <p>Main model: <code>{st.data.llm.model}</code> · fast model: <code>{st.data.llm.fast_model}</code></p>
               <p className="pt-2 text-xs text-slate-500">To switch model or provider, edit <code>LLM_PROVIDER</code>, <code>LLM_MODEL</code> and <code>LLM_FAST_MODEL</code> in <code>.env</code> and restart. Every generated resume records the model and prompt version used.</p>
-              {st.data.llm.provider === "gemini" && <ApiKeyForm configured={st.data.llm.configured} />}
+              {st.data.llm.provider === "gemini" && !st.data.hosted && <ApiKeyForm configured={st.data.llm.configured} />}
+              {st.data.hosted && <p className="pt-2 text-xs text-slate-500">The API key is set on the server with the <code>GEMINI_API_KEY</code> environment variable.</p>}
             </div>
           ) : <Spinner />}
         </Card>

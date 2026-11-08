@@ -9,17 +9,26 @@ from .config import get_settings
 _engine = None
 
 
-def get_engine():
-    global _engine
-    if _engine is None:
-        _engine = create_engine(get_settings().db_url, connect_args={"check_same_thread": False})
+def make_engine(url: str):
+    if url.startswith("sqlite"):
+        eng = create_engine(url, connect_args={"check_same_thread": False})
 
-        @event.listens_for(_engine, "connect")
+        @event.listens_for(eng, "connect")
         def _pragma(conn, _):
             cur = conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
+        return eng
+    # Postgres: UTC session so timezone-aware datetimes round-trip consistently
+    return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, pool_recycle=1800,
+                         connect_args={"options": "-c timezone=UTC"})
+
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = make_engine(get_settings().db_url)
     return _engine
 
 

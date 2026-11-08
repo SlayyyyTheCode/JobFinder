@@ -12,6 +12,9 @@ _fernet: Fernet | None = None
 
 
 def _key() -> bytes:
+    env = get_settings().token_encryption_key
+    if env:  # hosted: key comes from the server's environment, never from the database/volume
+        return env.encode()
     try:
         import keyring
         k = keyring.get_password(SERVICE, KEY_NAME)

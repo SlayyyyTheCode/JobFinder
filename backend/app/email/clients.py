@@ -3,6 +3,7 @@ Least privilege: read-only scopes; only messages passing a job-related pre-filte
 import base64
 import json
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -113,6 +114,9 @@ def _msal_app(cache_json: str = ""):
     cache = msal.SerializableTokenCache()
     if cache_json:
         cache.deserialize(cache_json)
+    if s.ms_client_secret:  # hosted: "Web" app registration with redirect flow
+        return msal.ConfidentialClientApplication(s.ms_client_id, client_credential=s.ms_client_secret,
+                                                  authority=s.ms_authority, token_cache=cache), cache
     return msal.PublicClientApplication(s.ms_client_id, authority=s.ms_authority, token_cache=cache), cache
 
 
@@ -176,7 +180,66 @@ def body(provider: str, token_enc: str, msg_id: str) -> str:
     return (gmail_body if provider == "gmail" else outlook_body)(token_enc, msg_id)
 
 
-# ---------------- connect flow (runs in background thread; browser consent) ----------------
+# ---------------- hosted connect flow: standard web redirect (authorize → callback) ----------------
+
+_oauth_state: dict[str, dict] = {}  # state → in-flight flow. Single-process server only.
+_STATE_TTL = 600
+
+
+def _purge_state() -> None:
+    cutoff = time.time() - _STATE_TTL
+    for k in [k for k, v in _oauth_state.items() if v["ts"] < cutoff]:
+        _oauth_state.pop(k, None)
+
+
+def _gmail_web_flow(redirect_uri: str):
+    from google_auth_oauthlib.flow import Flow
+    s = get_settings()
+    if not (s.google_client_id and s.google_client_secret):
+        raise EmailAuthError("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set on the server.")
+    cfg = {"web": {"client_id": s.google_client_id, "client_secret": s.google_client_secret,
+                   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                   "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": [redirect_uri]}}
+    return Flow.from_client_config(cfg, scopes=GMAIL_SCOPES, redirect_uri=redirect_uri)
+
+
+def web_authorize_url(provider: str, redirect_uri: str) -> str:
+    _purge_state()
+    if provider == "gmail":
+        flow = _gmail_web_flow(redirect_uri)
+        url, state = flow.authorization_url(access_type="offline", prompt="consent")
+        _oauth_state[state] = {"provider": provider, "verifier": flow.code_verifier, "ts": time.time()}
+        return url
+    app, _ = _msal_app()
+    if not hasattr(app, "initiate_auth_code_flow"):
+        raise EmailAuthError("Set MS_CLIENT_SECRET on the server to use Outlook in hosted mode.")
+    flow = app.initiate_auth_code_flow(GRAPH_SCOPES, redirect_uri=redirect_uri, prompt="select_account")
+    _oauth_state[flow["state"]] = {"provider": provider, "flow": flow, "ts": time.time()}
+    return flow["auth_uri"]
+
+
+def web_complete(provider: str, params: dict, redirect_uri: str) -> tuple[str, str]:
+    """Exchange the callback for tokens. Returns (account, encrypted_token)."""
+    st = _oauth_state.pop(params.get("state", ""), None)
+    if not st or st["provider"] != provider or st["ts"] < time.time() - _STATE_TTL:
+        raise EmailAuthError("Sign-in expired or was not started here. Try connecting again.")
+    if params.get("error"):
+        raise EmailAuthError(f"{provider.title()} sign-in was cancelled or denied.")
+    if provider == "gmail":
+        flow = _gmail_web_flow(redirect_uri)
+        flow.code_verifier = st["verifier"]
+        flow.fetch_token(code=params["code"])
+        creds = flow.credentials
+        account = _gmail_service(creds).users().getProfile(userId="me").execute().get("emailAddress", "")
+        return account, encrypt(creds.to_json())
+    app, cache = _msal_app()
+    res = app.acquire_token_by_auth_code_flow(st["flow"], params)
+    if "access_token" not in res:
+        raise EmailAuthError(res.get("error_description") or "Microsoft sign-in failed")
+    return (res.get("id_token_claims") or {}).get("preferred_username", ""), encrypt(cache.serialize())
+
+
+# ---------------- desktop connect flow (runs in background thread; browser consent) ----------------
 
 _pending: dict[str, dict] = {}
 

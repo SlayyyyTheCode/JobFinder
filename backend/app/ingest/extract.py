@@ -20,8 +20,10 @@ class IngestError(ValueError):
 def detect_format(filename: str, data: bytes) -> str:
     if len(data) == 0:
         raise IngestError("File is empty.")
-    if len(data) > MAX_BYTES:
-        raise IngestError("File is larger than 10 MB.")
+    from ..config import get_settings
+    limit = min(MAX_BYTES, get_settings().upload_limit_bytes)
+    if len(data) > limit:
+        raise IngestError(f"File is larger than {limit // (1024 * 1024)} MB.")
     ext = Path(filename).suffix.lower()
     if data[:5] == b"%PDF-":
         return "pdf"

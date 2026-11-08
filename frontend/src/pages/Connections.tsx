@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw, Trash2, Mail } from "lucide-react";
 import { api } from "../api";
@@ -61,7 +62,12 @@ function Mailboxes() {
     refetchInterval: (q) => (Object.values(q.state.data?.pending ?? {}).some((p) => p.state === "running") ? 2000 : false),
   });
   const inv = () => qc.invalidateQueries({ queryKey: ["mail"] });
-  const connect = useMutation({ mutationFn: (p: string) => api.post(`/email/${p}/connect`), onSuccess: inv });
+  const connect = useMutation({
+    mutationFn: (p: string) => api.post<{ state: string; redirect?: string }>(`/email/${p}/connect`),
+    onSuccess: (r) => { if (r.redirect) window.location.href = r.redirect; else inv(); }, // hosted: provider sign-in page
+  });
+  const [params] = useSearchParams();
+  const mailError = params.get("mail_error"), justConnected = params.get("connected");
   const del = useMutation({ mutationFn: (id: number) => api.del(`/email/connections/${id}`), onSuccess: inv });
   const poll = useMutation({ mutationFn: (id: number) => api.post(`/email/connections/${id}/poll`), onSuccess: inv });
   const ok = { gmail: st.data?.gmail_configured, outlook: st.data?.outlook_configured };
@@ -76,7 +82,10 @@ function Mailboxes() {
           </Button>
         ))}
       </div>
-      {(!ok.gmail || !ok.outlook) && <p className="mt-2 text-xs text-amber-700">To enable a mailbox, register an OAuth app and add it to .env — steps in docs/SETUP_OAUTH.md.</p>}
+      {justConnected && <p className="mt-2 text-sm text-emerald-700">{justConnected === "gmail" ? "Gmail" : "Outlook"} connected. The first check is running.</p>}
+      {mailError && <ErrorNote error={new Error(mailError)} />}
+      <ErrorNote error={connect.error} />
+      {(!ok.gmail || !ok.outlook) && <p className="mt-2 text-xs text-amber-700">To enable a mailbox, register an OAuth app and add it to the server settings — steps in docs/SETUP_OAUTH.md.</p>}
       {Object.entries(data?.pending ?? {}).map(([p, s]) => s.state === "running" ? <p key={p} className="mt-2 text-sm text-slate-600">Waiting for you to approve access in the browser window…</p> : s.state === "error" ? <ErrorNote key={p} error={new Error(s.error)} /> : null)}
       <ul className="mt-4 space-y-2">
         {data?.connections.map((c) => (

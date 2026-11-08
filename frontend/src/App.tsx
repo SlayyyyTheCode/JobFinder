@@ -1,11 +1,12 @@
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  LayoutDashboard, UserRound, SlidersHorizontal, Search, FileCheck2, Mail, Bot, PlugZap, Settings as SettingsIcon, Bell,
+  LayoutDashboard, UserRound, SlidersHorizontal, Search, FileCheck2, Mail, Bot, PlugZap, Settings as SettingsIcon, Bell, LogOut,
 } from "lucide-react";
 import { api, Notification } from "./api";
-import { cx, fmtDateTime } from "./ui";
+import { Spinner, cx, fmtDateTime } from "./ui";
+import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Preferences from "./pages/Preferences";
@@ -79,6 +80,21 @@ function Notifications() {
 }
 
 export default function App() {
+  const qc = useQueryClient();
+  const auth = useQuery({ queryKey: ["auth"], queryFn: () => api.get<{ hosted: boolean; authenticated: boolean }>("/auth/status"), retry: false });
+  useEffect(() => {
+    const h = () => qc.invalidateQueries({ queryKey: ["auth"] });
+    window.addEventListener("jp-unauthorized", h);
+    return () => window.removeEventListener("jp-unauthorized", h);
+  }, [qc]);
+  if (auth.isLoading) return <div className="p-8"><Spinner /></div>;
+  if (auth.data?.hosted && !auth.data.authenticated) return <Login onDone={() => qc.invalidateQueries()} />;
+  return <Shell hosted={!!auth.data?.hosted} />;
+}
+
+function Shell({ hosted }: { hosted: boolean }) {
+  const qc = useQueryClient();
+  const logout = useMutation({ mutationFn: () => api.post("/auth/logout"), onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }) });
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
@@ -100,7 +116,14 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-2 md:justify-end">
           <span className="font-semibold md:hidden">JobPilot</span>
-          <Notifications />
+          <div className="flex items-center gap-1">
+            <Notifications />
+            {hosted && (
+              <button onClick={() => logout.mutate()} className="flex items-center gap-1.5 rounded-lg px-2 py-2 text-sm text-slate-600 hover:bg-slate-100" aria-label="Sign out">
+                <LogOut className="size-4" aria-hidden /> <span className="hidden sm:inline">Sign out</span>
+              </button>
+            )}
+          </div>
         </header>
         <nav className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 md:hidden" aria-label="Main mobile">
           {NAV.map(({ to, label, end }) => (
